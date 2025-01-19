@@ -1,44 +1,33 @@
-"use client"
-import { useEffect, useState } from 'react'
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Card, CardContent } from "@/components/ui/card"
-//@ts-ignore
-import { ChevronUp, ChevronDown, ThumbsDown, Play, Share2 } from "lucide-react"
-import { toast, ToastContainer } from 'react-toastify'
-import 'react-toastify/dist/ReactToastify.css'
-import { Appbar } from '../components/Appbar'
-import LiteYouTubeEmbed from 'react-lite-youtube-embed';
-import 'react-lite-youtube-embed/dist/LiteYouTubeEmbed.css'
-import { YT_REGEX } from '../lib/utils'
-import StreamView from '../components/StreamView'
-
-interface Video {
-    "id": string,
-    "type": string,
-    "url": string,
-    "extractedId": string,
-    "title": string,
-    "smallImg": string,
-    "bigImg": string,
-    "active": boolean,
-    "userId": string,
-    "upvotes": number,
-    "haveUpvoted": boolean
-}
+"use client";
+import { useEffect, useState } from 'react';
+import StreamView from '../components/StreamView';
 
 const REFRESH_INTERVAL_MS = 10 * 1000;
 
-const creatorId = "773eea73-026f-4425-aae0-720f3bc09b23"
+export default function Component() {
+    const [creatorId, setCreatorId] = useState<string | null>(null);
 
-export default async function Component() {
-    try {
-        const data = await fetch("/api/user").then(res => res.json());
-  
-        return <StreamView creatorId={data.user.id} playVideo={true} />
-    } catch(e) {
-        return null
+    useEffect(() => {
+        const fetchUser = async () => {
+            try {
+                const data = await fetch("/api/user").then(res => res.json());
+                setCreatorId(data.user.id);
+            } catch (error) {
+                console.error("Failed to fetch user data", error);
+                // Handle error
+            }
+        };
+
+        fetchUser();
+
+        // Optionally refresh data at regular intervals
+        const interval = setInterval(fetchUser, REFRESH_INTERVAL_MS);
+        return () => clearInterval(interval);
+    }, []);
+
+    if (!creatorId) {
+        return <p>Loading...</p>; // or a loading spinner
     }
-}
 
-export const dynamic = 'auto'
+    return <StreamView creatorId={creatorId} playVideo={true} />;
+}
