@@ -1,18 +1,10 @@
-"use client";
+'use client'
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
-//@ts-ignore
-import { ChevronUp, ChevronDown, Share2, PlayCircle } from "lucide-react";
-import { toast, ToastContainer } from "react-toastify";
-import "react-toastify/dist/ReactToastify.css";
-import { Appbar } from "../components/Appbar";
-import LiteYouTubeEmbed from "react-lite-youtube-embed";
-import "react-lite-youtube-embed/dist/LiteYouTubeEmbed.css";
-import { YT_REGEX } from "../lib/utils";
-//@ts-ignore
-import YouTubePlayer from "youtube-player";
+import { ChevronUp, ChevronDown, Share2, PlayCircle, X } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 interface Video {
   id: string;
@@ -28,7 +20,14 @@ interface Video {
   haveUpvoted: boolean;
 }
 
+interface Notification {
+  id: string;
+  message: string;
+  type: 'success' | 'error' | 'info';
+}
+
 const REFRESH_INTERVAL_MS = 10 * 1000;
+const YT_REGEX = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/;
 
 export default function StreamView({
   creatorId,
@@ -42,59 +41,41 @@ export default function StreamView({
   const [currentVideo, setCurrentVideo] = useState<Video | null>(null);
   const [loading, setLoading] = useState(false);
   const [playNextLoader, setPlayNextLoader] = useState(false);
-  const videoPlayerRef = useRef<HTMLDivElement>(null);
-  const playerRef = useRef<any>(null);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  
+  // Create a ref for the iframe
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  const showNotification = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    const id = Math.random().toString(36).substring(7);
+    setNotifications(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    }, 5000);
+  };
+
+  const removeNotification = (id: string) => {
+    setNotifications(prev => prev.filter(n => n.id !== id));
+  };
 
   const refreshStreams = async () => {
-    const res = await fetch(`/api/streams/?creatorId=${creatorId}`, {
-      credentials: "include",
-    });
-    const json = await res.json();
-    
-    // Sort queue by upvotes
-    const sortedStreams = json.streams.sort((a: any, b: any) => b.upvotes - a.upvotes);
-    setQueue(sortedStreams);
+    try {
+      const res = await fetch(`/api/streams/?creatorId=${creatorId}`, {
+        credentials: "include",
+      });
+      const json = await res.json();
+      
+      const sortedStreams = json.streams.sort((a: any, b: any) => b.upvotes - a.upvotes);
+      setQueue(sortedStreams);
 
-    // Only update current video if it's different
-    if (json.activeStream?.stream && (!currentVideo || currentVideo.id !== json.activeStream.stream.id)) {
-      setCurrentVideo(json.activeStream.stream);
+      if (json.activeStream?.stream && (!currentVideo || currentVideo.id !== json.activeStream.stream.id)) {
+        setCurrentVideo(json.activeStream.stream);
+      }
+    } catch (err) {
+      showNotification("Failed to refresh streams", "error");
     }
   };
 
-  // Initialize player once
-  useEffect(() => {
-    if (!videoPlayerRef.current || !playVideo) return;
-
-    playerRef.current = YouTubePlayer(videoPlayerRef.current, {
-      videoId: currentVideo?.extractedId,
-      playerVars: {
-        autoplay: 1,
-        controls: 1,
-        modestbranding: 1,
-      },
-    });
-
-    playerRef.current.on('stateChange', (event: any) => {
-      if (event.data === 0) {  // Video ended
-        playNext();
-      }
-    });
-
-    return () => {
-      if (playerRef.current) {
-        playerRef.current.destroy();
-      }
-    };
-  }, [videoPlayerRef.current, playVideo]);
-
-  // Handle current video changes
-  useEffect(() => {
-    if (currentVideo && playerRef.current && playVideo) {
-      playerRef.current.loadVideoById(currentVideo.extractedId);
-    }
-  }, [currentVideo, playVideo]);
-
-  // Refresh streams periodically
   useEffect(() => {
     refreshStreams();
     const interval = setInterval(refreshStreams, REFRESH_INTERVAL_MS);
@@ -104,7 +85,7 @@ export default function StreamView({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputLink.match(YT_REGEX)) {
-      toast.error("Please enter a valid YouTube URL");
+      showNotification("Please enter a valid YouTube URL", "error");
       return;
     }
     setLoading(true);
@@ -119,10 +100,10 @@ export default function StreamView({
       if (!res.ok) throw new Error('Failed to add stream');
       const newStream = await res.json();
       setQueue(prevQueue => [...prevQueue, newStream].sort((a, b) => b.upvotes - a.upvotes));
-      toast.success("Song added to queue!");
+      showNotification("Song added to queue!", "success");
       setInputLink("");
     } catch (error) {
-      toast.error("Failed to add song to queue");
+      showNotification("Failed to add song to queue", "error");
     }
     setLoading(false);
   };
@@ -138,7 +119,6 @@ export default function StreamView({
 
       if (!response.ok) throw new Error('Failed to vote');
 
-      // Update the video's vote count and sort the queue
       const updatedQueue = queue.map(video => {
         if (video.id === videoId) {
           return {
@@ -151,15 +131,15 @@ export default function StreamView({
       }).sort((a, b) => b.upvotes - a.upvotes);
 
       setQueue(updatedQueue);
-      await refreshStreams(); // Refresh to ensure we have the latest state
+      await refreshStreams();
     } catch (error) {
-      toast.error(`Failed to ${isUpvote ? 'upvote' : 'downvote'} the song`);
+      showNotification(`Failed to ${isUpvote ? 'upvote' : 'downvote'} the song`, "error");
     }
   };
 
   const playNext = async () => {
     if (queue.length === 0) {
-      toast.info("No more songs in the queue!");
+      showNotification("No more songs in the queue!", "info");
       return;
     }
 
@@ -175,11 +155,10 @@ export default function StreamView({
       if (json.stream) {
         setCurrentVideo(json.stream);
         setQueue(prevQueue => prevQueue.filter(video => video.id !== json.stream.id));
-        toast.success("Playing next song!");
+        showNotification("Playing next song!", "success");
       }
     } catch (error) {
-      console.error("Error playing next video:", error);
-      toast.error("Error playing next video. Please try again.");
+      showNotification("Error playing next video. Please try again.", "error");
     } finally {
       setPlayNextLoader(false);
     }
@@ -188,26 +167,64 @@ export default function StreamView({
   const handleShare = () => {
     const shareableLink = `${window.location.origin}/creator/${creatorId}`;
     navigator.clipboard.writeText(shareableLink).then(
-      () => toast.success("Link copied to clipboard!"),
-      () => toast.error("Failed to copy link. Please try again.")
+      () => showNotification("Link copied to clipboard!", "success"),
+      () => showNotification("Failed to copy link. Please try again.", "error")
     );
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-[rgb(10,10,10)] text-gray-200">
-      <Appbar />
+    <div className="flex flex-col min-h-screen bg-gray-950 text-gray-200">
+      {/* Notifications */}
+      <div className="fixed top-4 right-4 z-50 space-y-2">
+        {notifications.map(({ id, message, type }) => (
+          <Alert
+            key={id}
+            variant={type === 'error' ? 'destructive' : 'default'}
+            className={`${
+              type === 'success' ? 'border-green-500 bg-green-950' :
+              type === 'info' ? 'border-blue-500 bg-blue-950' :
+              'border-red-500 bg-red-950'
+            } w-72 flex justify-between items-center`}
+          >
+            <AlertDescription>{message}</AlertDescription>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-4 w-4 p-0 hover:bg-transparent"
+              onClick={() => removeNotification(id)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </Alert>
+        ))}
+      </div>
+
+      {/* Rest of the component remains the same... */}
+      <nav className="border-b border-gray-800 bg-gray-900 p-4">
+        <div className="max-w-screen-xl mx-auto">
+          <h1 className="text-xl font-bold text-white">Stream View</h1>
+        </div>
+      </nav>
       
       {/* Video Player Section */}
-      {playVideo && (
+      {playVideo && currentVideo && (
         <div className="w-full bg-black py-4">
           <div className="max-w-screen-xl mx-auto px-4">
-            <div ref={videoPlayerRef} className="aspect-video w-full"></div>
+            <iframe
+              ref={iframeRef}
+              className="w-full aspect-video"
+              src={`https://www.youtube.com/embed/${currentVideo.extractedId}?autoplay=1&enablejsapi=1`}
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+            />
           </div>
         </div>
       )}
 
+      {/* Main Content */}
       <div className="flex justify-center px-4">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-5 w-full max-w-screen-xl pt-8">
+          {/* Queue Section */}
           <div className="col-span-3">
             <div className="space-y-4">
               <div className="flex justify-between items-center">
@@ -245,7 +262,7 @@ export default function StreamView({
 
               {/* Queue Display */}
               {queue.length === 0 ? (
-                <Card className="bg-gray-900 border-gray-800 w-full">
+                <Card className="bg-gray-900 border-gray-800">
                   <CardContent className="p-4">
                     <p className="text-center py-8 text-gray-400">
                       No videos in queue
@@ -330,10 +347,12 @@ export default function StreamView({
                 <Card className="bg-gray-900 border-gray-800">
                   <CardContent className="p-4">
                     <h3 className="font-semibold text-white">Preview</h3>
-                    <div className="mt-2">
-                      <LiteYouTubeEmbed
-                        title=""
-                        id={YT_REGEX.exec(inputLink)?.[1] || ""}
+                    <div className="mt-2 aspect-video">
+                      <iframe
+                        className="w-full h-full"
+                        src={`https://www.youtube.com/embed/${YT_REGEX.exec(inputLink)?.[1]}`}
+                        allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
                       />
                     </div>
                   </CardContent>
@@ -343,7 +362,6 @@ export default function StreamView({
           </div>
         </div>
       </div>
-      <ToastContainer />
     </div>
   );
 }
